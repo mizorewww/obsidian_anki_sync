@@ -1,99 +1,149 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import {MarkdownView, Notice, Plugin, TAbstractFile, TFile} from "obsidian";
+import {registerCardPreview} from "./preview";
+import {AnkiSyncService, formatSummary} from "./sync";
+import {AnkiSyncSettings, AnkiSyncSettingTab, DEFAULT_SETTINGS} from "./settings";
 
-// Remember to rename these classes and interfaces!
+export default class ObsidianAnkiSyncPlugin extends Plugin {
+	settings: AnkiSyncSettings;
+	private readonly autoSyncTimers = new Map<string, number>();
+	private readonly ignoredAutoSyncPaths = new Set<string>();
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
-
-	async onload() {
+	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
-
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
+		this.addRibbonIcon("refresh-cw", "Sync current page to Anki", () => {
+			const file = this.app.workspace.getActiveFile();
+			if (file?.extension === "md") {
+				void this.syncCurrentFile(file);
+			} else {
+				new Notice("Open a Markdown note before syncing.");
 			}
 		});
-		// This adds an editor command that can perform some operation on the current editor instance
+
 		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
+			id: "sync-current-page",
+			name: "Sync current page to Anki",
+			checkCallback: (checking) => {
 				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
-
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
+				const file = markdownView?.file;
+				if (!file || file.extension !== "md") return false;
+				if (!checking) void this.syncCurrentFile(file);
+				return true;
+			},
 		});
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
+		this.addCommand({
+			id: "sync-all-pages",
+			name: "Sync all pages to Anki",
+			callback: () => {
+				void this.syncAllFiles();
+			},
 		});
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-
+		registerCardPreview(this, this.app);
+		this.registerEvent(this.app.vault.on("modify", (file) => this.handleFileModified(file)));
+		this.registerEvent(this.app.vault.on("rename", (file) => this.handleFileRenamed(file)));
+		this.register(() => this.clearAutoSyncTimers());
+		this.addSettingTab(new AnkiSyncSettingTab(this.app, this));
 	}
 
-	onunload() {
+	onunload(): void {
+		this.clearAutoSyncTimers();
 	}
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
+	async loadSettings(): Promise<void> {
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<AnkiSyncSettings>);
 	}
 
-	async saveSettings() {
+	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
+	}
+
+	private async syncCurrentFile(file: TFile, silent = false): Promise<void> {
+		const notice = silent ? null : new Notice("Syncing current page to Anki...", 0);
+		try {
+			const service = this.createSyncService();
+			const summary = await service.syncCurrentFile(file, {
+				silent,
+				onBeforeWrite: (changedFile) => this.ignoredAutoSyncPaths.add(changedFile.path),
+			});
+
+			const message = summary.cards === 0
+				? "No cards found in this page."
+				: `Anki sync complete: ${formatSummary(summary)}.`;
+			if (notice) {
+				notice.setMessage(message);
+				window.setTimeout(() => notice.hide(), 3500);
+			} else if (!silent) {
+				new Notice(message);
+			}
+		} catch (error) {
+			notice?.hide();
+			new Notice(`Anki sync failed: ${errorMessage(error)}`, 8000);
+			console.error(error);
+		}
+	}
+
+	private async syncAllFiles(): Promise<void> {
+		const notice = new Notice("Syncing all pages to Anki...", 0);
+		try {
+			const service = this.createSyncService();
+			const summary = await service.syncAllFiles({
+				onBeforeWrite: (changedFile) => this.ignoredAutoSyncPaths.add(changedFile.path),
+			});
+			notice.setMessage(`Anki sync complete: ${formatSummary(summary)} across ${summary.scannedFiles} file(s).`);
+			window.setTimeout(() => notice.hide(), 5000);
+		} catch (error) {
+			notice.hide();
+			new Notice(`Anki sync failed: ${errorMessage(error)}`, 8000);
+			console.error(error);
+		}
+	}
+
+	private handleFileModified(file: TAbstractFile): void {
+		if (!(file instanceof TFile) || file.extension !== "md") return;
+		if (!this.settings.autoSyncOnSave) return;
+
+		if (this.ignoredAutoSyncPaths.has(file.path)) {
+			this.ignoredAutoSyncPaths.delete(file.path);
+			return;
+		}
+
+		this.queueAutoSync(file);
+	}
+
+	private handleFileRenamed(file: TAbstractFile): void {
+		if (!(file instanceof TFile) || file.extension !== "md") return;
+		if (!this.settings.autoSyncOnSave) return;
+		this.queueAutoSync(file);
+	}
+
+	private queueAutoSync(file: TFile): void {
+		const existingTimer = this.autoSyncTimers.get(file.path);
+		if (existingTimer !== undefined) {
+			window.clearTimeout(existingTimer);
+		}
+
+		const timer = window.setTimeout(() => {
+			this.autoSyncTimers.delete(file.path);
+			void this.syncCurrentFile(file, true);
+		}, 1200);
+
+		this.autoSyncTimers.set(file.path, timer);
+	}
+
+	private createSyncService(): AnkiSyncService {
+		return new AnkiSyncService(this.app, this.settings);
+	}
+
+	private clearAutoSyncTimers(): void {
+		for (const timer of this.autoSyncTimers.values()) {
+			window.clearTimeout(timer);
+		}
+		this.autoSyncTimers.clear();
 	}
 }
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
-
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
-
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
