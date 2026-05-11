@@ -11,13 +11,8 @@ export default class ObsidianAnkiSyncPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		this.addRibbonIcon("refresh-cw", "Sync current page to Anki", () => {
-			const file = this.app.workspace.getActiveFile();
-			if (file?.extension === "md") {
-				void this.syncCurrentFile(file);
-			} else {
-				new Notice("Open a Markdown note before syncing.");
-			}
+		this.addRibbonIcon("refresh-cw", "Sync all pages to Anki", () => {
+			void this.syncAllFiles();
 		});
 
 		this.addCommand({
