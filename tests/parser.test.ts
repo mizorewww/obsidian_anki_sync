@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {describe, it} from "node:test";
 import {MANAGED_TAG} from "../src/constants";
+import {prepareFieldsForAnki} from "../src/field-encoding";
 import {parseCardsDocument} from "../src/parser";
 import {deckNameForPath, extractPathFromTags, makePathTag, makeUuidTag, sanitizeUserTag} from "../src/tags";
 
@@ -117,5 +118,29 @@ describe("tag and deck helpers", () => {
 		assert.equal(sanitizeUserTag("#python/tools"), "python::tools");
 		assert.equal(sanitizeUserTag(" spaced tag "), "spaced_tag");
 		assert.equal(deckNameForPath("Obsidian", "a/b.md"), "Obsidian::a::b.md");
+	});
+});
+
+describe("Anki field encoding", () => {
+	it("encodes braces inside cloze answers without changing source fields", () => {
+		const fields = {
+			Text: "$$ {{c1::\\frac{\\text{A}}{\\text{B}}}} $$",
+			Extra: "$$ \\frac{a}{b} $$",
+		};
+
+		assert.deepEqual(prepareFieldsForAnki(fields), {
+			Text: "$$ {{c1::\\frac&#123;\\text&#123;A&#125;&#125;&#123;\\text&#123;B&#125;&#125;}} $$",
+			Extra: "$$ \\frac{a}{b} $$",
+		});
+	});
+
+	it("escapes HTML while keeping cloze delimiters readable to Anki", () => {
+		assert.deepEqual(prepareFieldsForAnki({
+			Text: "{{c1::<tag> {x} & y}}",
+			Extra: "<extra>",
+		}), {
+			Text: "{{c1::&lt;tag&gt; &#123;x&#125; &amp; y}}",
+			Extra: "&lt;extra&gt;",
+		});
 	});
 });

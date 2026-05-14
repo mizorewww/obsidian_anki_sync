@@ -1,5 +1,6 @@
 import {requestUrl} from "obsidian";
 import {MANAGED_TAG, SUPPORTED_MODELS, TEMPLATE_SETUP_HINT} from "./constants";
+import {prepareFieldsForAnki} from "./field-encoding";
 import {AnkiFields, ParsedCard} from "./parser";
 import {extractUuidFromTags, makeUuidTag} from "./tags";
 
@@ -71,7 +72,7 @@ export class AnkiConnectClient {
 	}
 
 	async updateNote(noteId: number, fields: AnkiFields, tags: string[]): Promise<void> {
-		const escapedFields = escapeFields(fields);
+		const escapedFields = prepareFieldsForAnki(fields);
 		try {
 			await this.invoke("updateNoteFields", {
 				note: {
@@ -96,7 +97,7 @@ export class AnkiConnectClient {
 	}
 
 	async updateNoteModel(noteId: number, modelName: string, fields: AnkiFields, tags: string[]): Promise<void> {
-		const escapedFields = escapeFields(fields);
+		const escapedFields = prepareFieldsForAnki(fields);
 		try {
 			await this.invoke("updateNoteModel", {
 				note: {
@@ -204,7 +205,7 @@ export class AnkiConnectClient {
 		return {
 			deckName: card.deckName,
 			modelName: card.modelName,
-			fields: escapeFields(card.fields),
+			fields: prepareFieldsForAnki(card.fields),
 			tags: card.ankiTags,
 			options: {
 				allowDuplicate: true,
@@ -254,27 +255,6 @@ function isUnsupportedAction(error: unknown): boolean {
 
 function errorMessage(error: unknown): string {
 	return error instanceof Error ? error.message : String(error);
-}
-
-function escapeFields(fields: AnkiFields): AnkiFields {
-	if ("Text" in fields) {
-		return {
-			Text: escapeHtml(fields.Text),
-			Extra: escapeHtml(fields.Extra),
-		};
-	}
-
-	return {
-		Front: escapeHtml(fields.Front),
-		Back: escapeHtml(fields.Back),
-	};
-}
-
-function escapeHtml(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
 }
 
 function previewField(fields: AnkiFields): string {

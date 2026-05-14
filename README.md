@@ -258,13 +258,21 @@ Anki tag 会做安全转换：
 
 ### LaTeX 中的 cloze
 
-复杂公式建议把整个公式或清晰的子表达式作为 cloze：
+Anki 的 cloze 解析会先于模板渲染执行。复杂 LaTeX 里常见的相邻 `}}` 原本会被 Anki 误判为 cloze 结束，例如：
 
 ```markdown
 $${{c1::f'(\xi)=\frac{f(b)-f(a)}{b-a}}}$$
 ```
 
-不要为了追求很细的挖空把 LaTeX 拆得太碎。公式里的花括号很多时，过细的 cloze 更容易让 Anki 的 cloze 转换结果难读。
+插件同步时会自动把 cloze 答案内部的 `{` / `}` 安全编码，避免这个截断问题，Obsidian 原文不需要改成实体。更推荐的制卡写法仍然是：在正文里 cloze 关键概念，公式保持完整展示。
+
+```markdown
+**市盈率**是公司的 {{c1::股价与每股收益的比率}}。
+
+$$\text{P/E} = \frac{\text{Share Price}}{\text{Earnings per Share}}$$
+```
+
+如果确实要在公式里挖空，可以直接按 Markdown/LaTeX 原文写；插件会在写入 Anki 时处理花括号。为了复习体验更清楚，优先只挖符号名、数字或公式旁边的文字说明。
 
 ## 给 LLM 制卡的注意事项
 
@@ -286,6 +294,7 @@ $${{c1::f'(\xi)=\frac{f(b)-f(a)}{b-a}}}$$
 12. 不要在卡片内容里放独占一行的 `---`。
 13. Markdown、代码块和 LaTeX 按 Obsidian 原生写法写，不要写 HTML。
 14. 如果需要展示 cloze 语法本身，在 Basic 卡里写成 `{{ c1::answer }}`，不要写成可被 Anki 识别的形式。
+15. 复杂 LaTeX 可以同步，但优先 cloze 文字说明，让公式完整展示；只有确实要考公式本身时才把 `\frac{...}{...}` 这类表达式放进 cloze。
 
 ### 推荐的 LLM 输出模板
 
