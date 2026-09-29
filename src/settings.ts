@@ -1,4 +1,4 @@
-import {App, Plugin, PluginSettingTab, Setting} from "obsidian";
+import {App, Platform, Plugin, PluginSettingTab, Setting} from "obsidian";
 import {DEFAULT_ANKI_CONNECT_URL, DEFAULT_ROOT_DECK} from "./constants";
 
 export interface AnkiSyncSettings {
@@ -31,10 +31,17 @@ export class AnkiSyncSettingTab extends PluginSettingTab {
 	display(): void {
 		const {containerEl} = this;
 		containerEl.empty();
+		const canUseAnkiConnect = !Platform.isMobileApp;
 
 		new Setting(containerEl)
 			.setName("Connection")
 			.setHeading();
+
+		if (!canUseAnkiConnect) {
+			new Setting(containerEl)
+				.setName("Mobile mode")
+				.setDesc("Card preview and card creation are available. Anki connect sync is disabled on mobile.");
+		}
 
 		new Setting(containerEl)
 			.setName("Anki connect endpoint")
@@ -43,6 +50,7 @@ export class AnkiSyncSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder(DEFAULT_ANKI_CONNECT_URL)
 					.setValue(this.plugin.settings.ankiConnectUrl)
+					.setDisabled(!canUseAnkiConnect)
 					.onChange(async (value) => {
 						this.plugin.settings.ankiConnectUrl = value.trim() || DEFAULT_ANKI_CONNECT_URL;
 						await this.plugin.saveSettings();
@@ -56,18 +64,20 @@ export class AnkiSyncSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder(DEFAULT_ROOT_DECK)
 					.setValue(this.plugin.settings.rootDeckName)
+					.setDisabled(!canUseAnkiConnect)
 					.onChange(async (value) => {
 						this.plugin.settings.rootDeckName = value.trim() || DEFAULT_ROOT_DECK;
 						await this.plugin.saveSettings();
 					});
 			});
 
-			new Setting(containerEl)
-				.setName("Sync on save")
-				.setDesc("Automatically sync Markdown files that contain a cards section after they are saved.")
+		new Setting(containerEl)
+			.setName("Sync on save")
+			.setDesc("Automatically sync Markdown files that contain a cards section after they are saved.")
 			.addToggle((toggle) => {
 				toggle
 					.setValue(this.plugin.settings.autoSyncOnSave)
+					.setDisabled(!canUseAnkiConnect)
 					.onChange(async (value) => {
 						this.plugin.settings.autoSyncOnSave = value;
 						await this.plugin.saveSettings();
@@ -80,6 +90,7 @@ export class AnkiSyncSettingTab extends PluginSettingTab {
 			.addToggle((toggle) => {
 				toggle
 					.setValue(this.plugin.settings.confirmBeforeDelete)
+					.setDisabled(!canUseAnkiConnect)
 					.onChange(async (value) => {
 						this.plugin.settings.confirmBeforeDelete = value;
 						await this.plugin.saveSettings();

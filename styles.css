@@ -115,13 +115,6 @@
 	display: none;
 }
 
-.oas-confirmation-buttons {
-	display: flex;
-	justify-content: flex-end;
-	gap: 0.5rem;
-	margin-top: 1rem;
-}
-
 .oas-delete-preview-list {
 	display: grid;
 	gap: 0.75rem;
@@ -163,3 +156,38 @@
 	line-height: 1.45;
 	overflow-wrap: anywhere;
 }
+
+.oas-card-modal {
+	min-width: min(720px, 92vw);
+	max-height: 90vh;
+	display: flex;
+	flex-direction: column;
+}
+
+.oas-card-modal .modal-content {
+	overflow-y: auto;
+	min-height: 0;
+}
+
+.oas-card-modal .setting-item {
+	align-items: flex-start;
+}
+
+.oas-card-modal-fields {
+	display: grid;
+	gap: 0.25rem;
+	margin-top: 0.25rem;
+}
+
+.oas-card-modal textarea {
+	width: min(460px, 100%);
+	min-height: 7rem;
+	font-family: var(--font-text);
+	line-height: 1.5;
+	resize: vertical;
+}
+
+.oas-card-modal-fields .setting-item:last-child textarea {
+	min-height: 5rem;
+}
+

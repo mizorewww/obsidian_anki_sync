@@ -1,23 +1,30 @@
 import {App, MarkdownPostProcessorContext, MarkdownRenderer, MarkdownRenderChild, Plugin} from "obsidian";
+import {prepareClozePreview} from "./cloze-preview";
 import {ParsedCard, parseCardsDocument} from "./parser";
 
-export function registerCardPreview(plugin: Plugin, app: App): void {
+export function registerCardPreview(plugin: Plugin, app: App, getRootDeckName: () => string): void {
 	plugin.registerMarkdownPostProcessor(async (element, context) => {
 		const heading = findCardsHeading(element);
 		if (!heading || heading.dataset.oasPreviewProcessed === "true") return;
+		heading.dataset.oasPreviewProcessed = "true";
 
 		const file = app.vault.getFileByPath(context.sourcePath);
-		if (!file) return;
+		if (!file) {
+			delete heading.dataset.oasPreviewProcessed;
+			return;
+		}
 
 		const source = await app.vault.cachedRead(file);
 		const parsed = parseCardsDocument(source, file.path, {
 			ensureIdentities: false,
-			rootDeckName: "Obsidian",
+			rootDeckName: getRootDeckName(),
 		});
 
-		if (parsed.cards.length === 0) return;
+		if (parsed.cards.length === 0) {
+			delete heading.dataset.oasPreviewProcessed;
+			return;
+		}
 
-		heading.dataset.oasPreviewProcessed = "true";
 		const container = document.createElement("div");
 		container.addClass("oas-card-preview-list");
 
@@ -74,75 +81,6 @@ async function renderObsidianMarkdown(renderChild: MarkdownRenderChild, app: App
 	await MarkdownRenderer.render(app, markdown, container, sourcePath, renderChild);
 }
 
-function prepareClozePreview(source: string): string {
-	let tokenized = source.replace(/\$\$([\s\S]*?)\$\$/g, (_match, formula: string) => {
-		return `$$${replaceLatexClozes(formula)}$$`;
-	});
-
-	tokenized = tokenized.replace(/\$([^$\n]+?)\$/g, (_match, formula: string) => {
-		return `$${replaceLatexClozes(formula)}$`;
-	});
-
-	return replaceAnkiClozes(tokenized, (answer) => {
-		return `<span class="oas-cloze" title="${escapeAttribute(answer)}">[...]</span>`;
-	});
-}
-
-function replaceLatexClozes(formula: string): string {
-	return replaceAnkiClozes(formula, () => "\\text{[...]}");
-}
-
-function replaceAnkiClozes(source: string, replacer: (answer: string) => string): string {
-	const opener = /\{\{c\d+::/g;
-	let result = "";
-	let readFrom = 0;
-	let match: RegExpExecArray | null;
-
-	while ((match = opener.exec(source)) !== null) {
-		const start = match.index;
-		const answerStart = opener.lastIndex;
-		const end = findClozeEnd(source, answerStart);
-		if (end === -1) continue;
-
-		const answer = stripClozeHint(source.slice(answerStart, end));
-		result += source.slice(readFrom, start) + replacer(answer);
-		readFrom = end + 2;
-		opener.lastIndex = readFrom;
-	}
-
-	return result + source.slice(readFrom);
-}
-
-function findClozeEnd(source: string, answerStart: number): number {
-	let braceDepth = 0;
-
-	for (let index = answerStart; index < source.length - 1; index += 1) {
-		const char = source[index];
-		if (char === "{") {
-			braceDepth += 1;
-			continue;
-		}
-
-		if (char !== "}") continue;
-
-		if (braceDepth > 0) {
-			braceDepth -= 1;
-			continue;
-		}
-
-		if (source[index + 1] === "}") {
-			return index;
-		}
-	}
-
-	return -1;
-}
-
-function stripClozeHint(answer: string): string {
-	const hintIndex = answer.indexOf("::");
-	return hintIndex >= 0 ? answer.slice(0, hintIndex) : answer;
-}
-
 function findCardsHeading(element: HTMLElement): HTMLElement | null {
 	const headings = Array.from(element.querySelectorAll<HTMLElement>("h1,h2,h3,h4,h5,h6"));
 	return headings.find((heading) => heading.textContent?.trim().toLowerCase() === "cards") ?? null;
@@ -163,12 +101,4 @@ function hideOriginalCardSource(heading: HTMLElement, previewContainer: HTMLElem
 function isHeadingAtOrAbove(element: HTMLElement, headingLevel: number): boolean {
 	if (!/^H[1-6]$/.test(element.tagName)) return false;
 	return Number(element.tagName.slice(1)) <= headingLevel;
-}
-
-function escapeAttribute(value: string): string {
-	return value
-		.replace(/&/g, "&amp;")
-		.replace(/"/g, "&quot;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;");
 }

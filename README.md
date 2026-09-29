@@ -5,10 +5,12 @@
 ## 功能
 
 - 从当前页面或全库 Markdown 中解析卡片并同步到 Anki。
+- 提供 `Create Anki card` 命令和左侧按钮，用表单快速创建 Cloze/Basic 卡片。
 - 每张卡片用 `uuid:` 作为稳定身份，用当前 Obsidian 文件路径作为来源。
 - Anki 中只管理带 `obsidian_anki_sync` 标签的笔记，不碰其他 Anki 笔记。
 - 自动创建 `Obsidian::<页面路径>` 层级牌组，例如 `Anki Sync Corner Cases.md` 会进入 `Obsidian::Anki Sync Corner Cases.md`。
 - 阅读视图中把 `# Cards` 区域显示成圆角卡片预览。预览使用 Obsidian 自带 Markdown/LaTeX 渲染，插件只提供外观和 cloze 占位。
+- 移动端可安装并渲染卡片预览，也可以创建卡片；AnkiConnect 同步入口只在桌面端启用。
 
 ## 前置条件
 
@@ -27,6 +29,8 @@ python3 /home/aac6fef/Developer/my_anki_template/anki_connect.py
 - `Basic-Modern`
 - `Basic-Modern-Reversed`
 - `Basic-Modern-Typing`
+
+移动端不需要 Anki Desktop 或 AnkiConnect。移动端只负责阅读预览和编辑制卡，实际同步请回到桌面端执行。
 
 ## 开发和构建
 
@@ -58,7 +62,9 @@ npm run dev
 
 ## 卡片书写格式
 
-卡片必须写在页面的 `# Cards` 标题下面。每张卡片之间用单独一行 `---` 分隔。
+人类制卡时建议优先使用命令面板、左侧按钮或编辑器右键菜单里的 `Create Anki card`。选中一段文字再打开它，弹窗会自动带入选中文本；Cloze 模式下可以选中文本后点击 `Wrap selection`，插件会自动生成下一个 `{{cN::...}}`。按 `Cmd/Ctrl+Enter` 可以直接插入卡片。
+
+卡片必须写在页面的 `# Cards` 标题下面。每张卡片之间用单独一行 `---` 分隔。卡片区域到下一个同级（或更高级）标题为止；其后的正文不会被当作卡片解析。代码围栏里的 `# Cards`、`---`、`tags:` 等行不会被误认为区域标题、分隔线或元数据。
 
 ```markdown
 # Cards

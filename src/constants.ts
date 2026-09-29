@@ -6,7 +6,7 @@ export const DEFAULT_ANKI_CONNECT_URL = "http://127.0.0.1:8765";
 export const DEFAULT_ROOT_DECK = "Obsidian";
 
 export const TEMPLATE_SETUP_HINT =
-	"Missing Modern Anki note types. Run: python3 /home/aac6fef/Developer/my_anki_template/anki_connect.py";
+	"Missing Modern Anki note types. Create them with the my_anki_template setup script (anki_connect.py).";
 
 export const SUPPORTED_MODELS = [
 	"Cloze-Modern",

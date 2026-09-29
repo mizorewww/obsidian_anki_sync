@@ -1,4 +1,4 @@
-import {PATH_TAG_PREFIX, UUID_TAG_PREFIX} from "./constants";
+import {DEFAULT_ROOT_DECK, PATH_TAG_PREFIX, UUID_TAG_PREFIX} from "./constants";
 
 export function encodeBase64Url(value: string): string {
 	const bytes = new TextEncoder().encode(value);
@@ -62,7 +62,7 @@ export function uniqueTags(tags: string[]): string[] {
 }
 
 export function deckNameForPath(rootDeckName: string, path: string): string {
-	const root = sanitizeDeckSegment(rootDeckName) || "Obsidian";
+	const root = sanitizeDeckSegment(rootDeckName) || DEFAULT_ROOT_DECK;
 	const segments = path.split("/").map(sanitizeDeckSegment).filter((segment) => segment.length > 0);
 	return [root, ...segments].join("::");
 }

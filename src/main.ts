@@ -1,7 +1,9 @@
-import {MarkdownView, Notice, Plugin, TAbstractFile, TFile} from "obsidian";
+import {MarkdownView, Notice, Platform, Plugin, TAbstractFile, TFile} from "obsidian";
+import {QuickCardModal} from "./card-creator";
 import {registerCardPreview} from "./preview";
 import {AnkiSyncService, formatSummary} from "./sync";
 import {AnkiSyncSettings, AnkiSyncSettingTab, DEFAULT_SETTINGS} from "./settings";
+import {errorMessage} from "./utils";
 
 export default class ObsidianAnkiSyncPlugin extends Plugin {
 	settings: AnkiSyncSettings;
@@ -11,31 +13,50 @@ export default class ObsidianAnkiSyncPlugin extends Plugin {
 	async onload(): Promise<void> {
 		await this.loadSettings();
 
-		this.addRibbonIcon("refresh-cw", "Sync all pages to Anki", () => {
-			void this.syncAllFiles();
+		this.addRibbonIcon("square-plus", "Create Anki card", () => {
+			this.openQuickCardModal();
 		});
 
 		this.addCommand({
-			id: "sync-current-page",
-			name: "Sync current page to Anki",
+			id: "create-anki-card",
+			name: "Create Anki card",
 			checkCallback: (checking) => {
 				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
 				const file = markdownView?.file;
 				if (!file || file.extension !== "md") return false;
-				if (!checking) void this.syncCurrentFile(file);
+				if (!checking) this.openQuickCardModal();
 				return true;
 			},
 		});
 
-		this.addCommand({
-			id: "sync-all-pages",
-			name: "Sync all pages to Anki",
-			callback: () => {
+		if (this.canUseAnkiConnect()) {
+			this.addRibbonIcon("refresh-cw", "Sync all pages to Anki", () => {
 				void this.syncAllFiles();
-			},
-		});
+			});
 
-		registerCardPreview(this, this.app);
+			this.addCommand({
+				id: "sync-current-page",
+				name: "Sync current page to Anki",
+				checkCallback: (checking) => {
+					const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+					const file = markdownView?.file;
+					if (!file || file.extension !== "md") return false;
+					if (!checking) void this.syncCurrentFile(file);
+					return true;
+				},
+			});
+
+			this.addCommand({
+				id: "sync-all-pages",
+				name: "Sync all pages to Anki",
+				callback: () => {
+					void this.syncAllFiles();
+				},
+			});
+		}
+
+		registerCardPreview(this, this.app, () => this.settings.rootDeckName);
+		this.registerEditorMenu();
 		this.registerEvent(this.app.vault.on("modify", (file) => this.handleFileModified(file)));
 		this.registerEvent(this.app.vault.on("rename", (file) => this.handleFileRenamed(file)));
 		this.register(() => this.clearAutoSyncTimers());
@@ -55,6 +76,11 @@ export default class ObsidianAnkiSyncPlugin extends Plugin {
 	}
 
 	private async syncCurrentFile(file: TFile, silent = false): Promise<void> {
+		if (!this.canUseAnkiConnect()) {
+			if (!silent) new Notice("Anki connect sync is disabled on mobile.");
+			return;
+		}
+
 		const notice = silent ? null : new Notice("Syncing current page to Anki...", 0);
 		try {
 			const service = this.createSyncService();
@@ -80,6 +106,11 @@ export default class ObsidianAnkiSyncPlugin extends Plugin {
 	}
 
 	private async syncAllFiles(): Promise<void> {
+		if (!this.canUseAnkiConnect()) {
+			new Notice("Anki connect sync is disabled on mobile.");
+			return;
+		}
+
 		const notice = new Notice("Syncing all pages to Anki...", 0);
 		try {
 			const service = this.createSyncService();
@@ -97,18 +128,16 @@ export default class ObsidianAnkiSyncPlugin extends Plugin {
 
 	private handleFileModified(file: TAbstractFile): void {
 		if (!(file instanceof TFile) || file.extension !== "md") return;
+		if (this.ignoredAutoSyncPaths.delete(file.path)) return;
+		if (!this.canUseAnkiConnect()) return;
 		if (!this.settings.autoSyncOnSave) return;
-
-		if (this.ignoredAutoSyncPaths.has(file.path)) {
-			this.ignoredAutoSyncPaths.delete(file.path);
-			return;
-		}
 
 		this.queueAutoSync(file);
 	}
 
 	private handleFileRenamed(file: TAbstractFile): void {
 		if (!(file instanceof TFile) || file.extension !== "md") return;
+		if (!this.canUseAnkiConnect()) return;
 		if (!this.settings.autoSyncOnSave) return;
 		this.queueAutoSync(file);
 	}
@@ -131,14 +160,46 @@ export default class ObsidianAnkiSyncPlugin extends Plugin {
 		return new AnkiSyncService(this.app, this.settings);
 	}
 
+	private openQuickCardModal(): void {
+		const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+		const selectedText = markdownView?.editor.getSelection();
+		const initialText = selectedText?.trim() ? selectedText : undefined;
+
+		new QuickCardModal(this.app, ({file, shouldSync}) => {
+			new Notice("Anki card inserted.");
+			if (shouldSync) {
+				void this.syncCurrentFile(file);
+			}
+		}, (file) => this.ignoredAutoSyncPaths.add(file.path), {
+			allowSync: this.canUseAnkiConnect(),
+			file: markdownView?.file ?? null,
+			editor: markdownView?.editor,
+			initialText,
+		}).open();
+	}
+
+	private registerEditorMenu(): void {
+		this.registerEvent(this.app.workspace.on("editor-menu", (menu, editor, view) => {
+			if (!(view instanceof MarkdownView)) return;
+			if (!editor.getSelection().trim()) return;
+
+			menu.addItem((item) => item
+				.setTitle("Create Anki card")
+				.setIcon("square-plus")
+				.onClick(() => {
+					this.openQuickCardModal();
+				}));
+		}));
+	}
+
 	private clearAutoSyncTimers(): void {
 		for (const timer of this.autoSyncTimers.values()) {
 			window.clearTimeout(timer);
 		}
 		this.autoSyncTimers.clear();
 	}
-}
 
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	private canUseAnkiConnect(): boolean {
+		return !Platform.isMobileApp;
+	}
 }

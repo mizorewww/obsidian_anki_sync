@@ -1,4 +1,4 @@
-import {App, Modal, Notice, TFile} from "obsidian";
+import {App, Modal, Notice, Setting, TFile} from "obsidian";
 import {AnkiConnectClient, AnkiNoteInfo, getManagedUuid} from "./anki";
 import {extractPathFromTags, makePathTag} from "./tags";
 import {parseCardsDocument, ParsedCard} from "./parser";
@@ -149,7 +149,7 @@ class DeleteConfirmationModal extends Modal {
 		const {contentEl} = this;
 		const count = this.candidates.length;
 		contentEl.empty();
-		contentEl.createEl("h2", {text: "Delete Anki notes"});
+		this.setTitle("Delete Anki notes");
 		contentEl.createEl("p", {
 			text: `${count} Obsidian-managed Anki note${count === 1 ? "" : "s"} no longer exist in Markdown.`,
 		});
@@ -159,15 +159,14 @@ class DeleteConfirmationModal extends Modal {
 			previewList.appendChild(renderDeletePreview(candidate));
 		}
 
-		const buttonRow = contentEl.createDiv({cls: "oas-confirmation-buttons"});
-		const cancelButton = buttonRow.createEl("button", {text: "Cancel"});
-		cancelButton.addEventListener("click", () => this.finish(false));
-
-		const deleteButton = buttonRow.createEl("button", {
-			cls: "mod-warning",
-			text: "Delete notes",
-		});
-		deleteButton.addEventListener("click", () => this.finish(true));
+		new Setting(contentEl)
+			.addButton((button) => button
+				.setButtonText("Cancel")
+				.onClick(() => this.finish(false)))
+			.addButton((button) => button
+				.setButtonText("Delete notes")
+				.setWarning()
+				.onClick(() => this.finish(true)));
 	}
 
 	onClose(): void {

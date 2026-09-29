@@ -1,5 +1,6 @@
-import {MANAGED_TAG, MODEL_ALIASES, SupportedModelName, SUPPORTED_MODELS} from "./constants";
+import {DEFAULT_ROOT_DECK, MANAGED_TAG, MODEL_ALIASES, SupportedModelName, SUPPORTED_MODELS} from "./constants";
 import {deckNameForPath, makePathTag, makeUuidTag, sanitizeUserTag, uniqueTags} from "./tags";
+import {trimOuterBlankLines} from "./utils";
 
 export interface ParsedCardsDocument {
 	cards: ParsedCard[];
@@ -39,6 +40,7 @@ interface ParseOptions {
 	ensureIdentities: boolean;
 	rootDeckName: string;
 	path: string;
+	usedUuids?: Set<string>;
 }
 
 interface BlockMeta {
@@ -48,15 +50,17 @@ interface BlockMeta {
 	tags: string[];
 }
 
-const CARDS_HEADING = /^#{1,6}\s+Cards\s*$/i;
+const CARDS_HEADING = /^(#{1,6})\s+Cards\s*$/i;
+const HEADING_LINE = /^(#{1,6})\s/;
 const BLOCK_SEPARATOR = /^\s*---\s*$/;
 const META_LINE = /^\s*(type|tag|tags|uuid|path)\s*:\s*(.*?)\s*$/i;
+const FENCE_LINE = /^\s*(```|~~~)/;
 const CLOZE_PATTERN = /\{\{c\d+::[\s\S]*?\}\}/i;
 const FRONT_MARKER = /^\s*Front\s*$/i;
 const BACK_MARKER = /^\s*Back\s*$/i;
 
 export function parseCardsDocument(source: string, path: string, options?: Partial<ParseOptions>): ParsedCardsDocument {
-	const rootDeckName = options?.rootDeckName ?? "Obsidian";
+	const rootDeckName = options?.rootDeckName ?? DEFAULT_ROOT_DECK;
 	const ensureIdentities = options?.ensureIdentities ?? false;
 	const pageTags = extractPageTags(source);
 	const cardsSection = findCardsSection(source);
@@ -75,6 +79,7 @@ export function parseCardsDocument(source: string, path: string, options?: Parti
 	const sectionContent = source.slice(cardsSection.contentStartOffset, cardsSection.endOffset);
 	const blocks = splitCardBlocks(sectionContent);
 	const cards: ParsedCard[] = [];
+	const usedUuids = new Set<string>();
 	let changed = false;
 	let rebuiltSection = "";
 
@@ -91,6 +96,7 @@ export function parseCardsDocument(source: string, path: string, options?: Parti
 			ensureIdentities,
 			rootDeckName,
 			path,
+			usedUuids,
 		}, pageTags, cards.length);
 
 		cards.push(parsed.card);
@@ -113,31 +119,62 @@ export function parseCardsDocument(source: string, path: string, options?: Parti
 }
 
 export function findCardsSection(source: string): CardsSection | null {
-	const lineStarts = getLineStarts(source);
 	const lines = source.split(/\n/);
 	let offset = 0;
+	let inFence = false;
 
 	for (let lineNumber = 0; lineNumber < lines.length; lineNumber += 1) {
 		const rawLine = lines[lineNumber] ?? "";
 		const line = rawLine.replace(/\r$/, "");
+		const lineStart = offset;
+		offset += rawLine.length + 1;
 
-		if (CARDS_HEADING.test(line)) {
-			const lineStart = lineStarts[lineNumber] ?? offset;
-			const lineEnd = lineStart + rawLine.length;
-			const contentStartOffset = lineEnd + (lineEnd < source.length && source[lineEnd] === "\n" ? 1 : 0);
-			return {
-				headingLine: lineNumber,
-				startOffset: lineStart,
-				contentStartOffset,
-				endOffset: source.length,
-				headingText: line.trim(),
-			};
+		if (FENCE_LINE.test(line)) {
+			inFence = !inFence;
+			continue;
+		}
+		if (inFence) continue;
+
+		const headingMatch = line.match(CARDS_HEADING);
+		if (!headingMatch) continue;
+
+		const headingLevel = headingMatch[1]?.length ?? 1;
+		const lineEnd = lineStart + rawLine.length;
+		const contentStartOffset = lineEnd + (lineEnd < source.length && source[lineEnd] === "\n" ? 1 : 0);
+		return {
+			headingLine: lineNumber,
+			startOffset: lineStart,
+			contentStartOffset,
+			endOffset: findSectionEndOffset(source, lines, lineNumber + 1, headingLevel, offset),
+			headingText: line.trim(),
+		};
+	}
+
+	return null;
+}
+
+function findSectionEndOffset(source: string, lines: string[], fromLine: number, headingLevel: number, fromOffset: number): number {
+	let offset = fromOffset;
+	let inFence = false;
+
+	for (let lineNumber = fromLine; lineNumber < lines.length; lineNumber += 1) {
+		const rawLine = lines[lineNumber] ?? "";
+		const line = rawLine.replace(/\r$/, "");
+
+		if (FENCE_LINE.test(line)) {
+			inFence = !inFence;
+		} else if (!inFence) {
+			const headingMatch = line.match(HEADING_LINE);
+			const level = headingMatch?.[1]?.length;
+			if (level !== undefined && level <= headingLevel) {
+				return offset;
+			}
 		}
 
 		offset += rawLine.length + 1;
 	}
 
-	return null;
+	return source.length;
 }
 
 export function extractPageTags(source: string): string[] {
@@ -167,7 +204,11 @@ export function normalizeModelName(value: string | null): SupportedModelName | n
 
 function parseCardBlock(block: string, options: ParseOptions, pageTags: string[], ordinal: number): {card: ParsedCard; changed: boolean} {
 	const meta = extractBlockMeta(block);
-	const uuid = normalizeUuid(meta.uuid) ?? createUuid();
+	let uuid = normalizeUuid(meta.uuid) ?? createUuid();
+	if (options.usedUuids?.has(uuid)) {
+		uuid = createUuid();
+	}
+	options.usedUuids?.add(uuid);
 	const modelName = chooseModelName(block, meta.type);
 	const fields = parseFields(block, modelName);
 	const mergedUserTags = uniqueTags([...pageTags, ...meta.tags].map((tag) => sanitizeUserTag(tag)).filter((tag): tag is string => tag !== null));
@@ -205,7 +246,7 @@ function chooseModelName(block: string, explicitType: string | null): SupportedM
 }
 
 function parseFields(block: string, modelName: SupportedModelName): AnkiFields {
-	const contentLines = block.split(/\n/).filter((line) => !isMetadataLine(line));
+	const contentLines = contentLinesOf(block);
 
 	if (modelName.startsWith("Cloze-Modern")) {
 		const extraIndex = contentLines.findIndex((line) => /^\s*Extra\s*$/i.test(line));
@@ -245,7 +286,14 @@ function extractBlockMeta(block: string): BlockMeta {
 		tags: [],
 	};
 
+	let inFence = false;
 	for (const line of block.split(/\n/)) {
+		if (FENCE_LINE.test(line.replace(/\r$/, ""))) {
+			inFence = !inFence;
+			continue;
+		}
+		if (inFence) continue;
+
 		const match = line.match(META_LINE);
 		if (!match) continue;
 
@@ -262,12 +310,26 @@ function extractBlockMeta(block: string): BlockMeta {
 
 function ensureIdentityLines(block: string, uuid: string, path: string): string {
 	const newline = block.endsWith("\n") ? "\n" : "";
-	const lines = block.replace(/\n$/, "").split(/\n/).filter((line) => {
-		const match = line.match(META_LINE);
-		if (!match) return true;
-		const key = match[1]?.toLowerCase();
-		return key !== "uuid" && key !== "path";
-	});
+	const lines: string[] = [];
+	let inFence = false;
+
+	for (const line of block.replace(/\n$/, "").split(/\n/)) {
+		if (FENCE_LINE.test(line.replace(/\r$/, ""))) {
+			inFence = !inFence;
+			lines.push(line);
+			continue;
+		}
+
+		if (!inFence) {
+			const match = line.match(META_LINE);
+			if (match) {
+				const key = match[1]?.toLowerCase();
+				if (key === "uuid" || key === "path") continue;
+			}
+		}
+
+		lines.push(line);
+	}
 
 	while (lines.length > 0 && (lines[lines.length - 1] ?? "").trim() === "") {
 		lines.pop();
@@ -281,17 +343,21 @@ function splitCardBlocks(sectionContent: string): Array<{block: string; separato
 	const lines = sectionContent.split(/(\n)/);
 	const blocks: Array<{block: string; separator: string}> = [];
 	let current = "";
+	let inFence = false;
 
 	for (let index = 0; index < lines.length; index += 2) {
 		const line = lines[index] ?? "";
 		const newline = lines[index + 1] ?? "";
 
-		if (BLOCK_SEPARATOR.test(line)) {
+		if (FENCE_LINE.test(line.replace(/\r$/, ""))) {
+			inFence = !inFence;
+		} else if (!inFence && BLOCK_SEPARATOR.test(line)) {
 			blocks.push({block: current, separator: line + newline});
 			current = "";
-		} else {
-			current += line + newline;
+			continue;
 		}
+
+		current += line + newline;
 	}
 
 	if (current.length > 0) {
@@ -302,11 +368,24 @@ function splitCardBlocks(sectionContent: string): Array<{block: string; separato
 }
 
 function hasCardContent(block: string): boolean {
-	return block.split(/\n/).some((line) => {
-		if (line.trim() === "") return false;
-		if (isMetadataLine(line)) return false;
-		return true;
-	});
+	return contentLinesOf(block).some((line) => line.trim() !== "");
+}
+
+function contentLinesOf(block: string): string[] {
+	const lines: string[] = [];
+	let inFence = false;
+
+	for (const line of block.split(/\n/)) {
+		if (FENCE_LINE.test(line.replace(/\r$/, ""))) {
+			inFence = !inFence;
+			lines.push(line);
+			continue;
+		}
+		if (!inFence && isMetadataLine(line)) continue;
+		lines.push(line);
+	}
+
+	return lines;
 }
 
 function isMetadataLine(line: string): boolean {
@@ -363,10 +442,6 @@ function stripFrontmatter(source: string): string {
 	return end >= 0 ? source.slice(end + 4) : source;
 }
 
-function trimOuterBlankLines(value: string): string {
-	return value.replace(/^\s*\n/g, "").replace(/\n\s*$/g, "").trim();
-}
-
 function createUuid(): string {
 	if (typeof globalThis.crypto?.randomUUID === "function") {
 		return globalThis.crypto.randomUUID();
@@ -389,10 +464,3 @@ function normalizeUuid(value: string | null): string | null {
 	return normalized;
 }
 
-function getLineStarts(source: string): number[] {
-	const starts = [0];
-	for (let index = 0; index < source.length; index += 1) {
-		if (source[index] === "\n") starts.push(index + 1);
-	}
-	return starts;
-}

@@ -3,6 +3,7 @@ import {MANAGED_TAG, SUPPORTED_MODELS, TEMPLATE_SETUP_HINT} from "./constants";
 import {prepareFieldsForAnki} from "./field-encoding";
 import {AnkiFields, ParsedCard} from "./parser";
 import {extractUuidFromTags, makeUuidTag} from "./tags";
+import {errorMessage} from "./utils";
 
 export interface AnkiNoteInfo {
 	noteId: number;
@@ -235,7 +236,10 @@ export class AnkiConnectClient {
 			throw new Error(`AnkiConnect ${action} failed with HTTP ${response.status}.`);
 		}
 
-		const payload = response.json as {result: T; error: string | null};
+		const payload = response.json as {result: T; error: string | null} | null;
+		if (!payload || typeof payload !== "object") {
+			throw new Error(`AnkiConnect ${action} returned an unexpected response. Is AnkiConnect up to date?`);
+		}
 		if (payload.error) {
 			throw new Error(payload.error);
 		}
@@ -250,11 +254,7 @@ export function getManagedUuid(note: AnkiNoteInfo): string | null {
 
 function isUnsupportedAction(error: unknown): boolean {
 	const message = errorMessage(error).toLowerCase();
-	return message.includes("unsupported action") || message.includes("not found") || message.includes("unknown action");
-}
-
-function errorMessage(error: unknown): string {
-	return error instanceof Error ? error.message : String(error);
+	return message.includes("unsupported action") || message.includes("unknown action");
 }
 
 function previewField(fields: AnkiFields): string {
